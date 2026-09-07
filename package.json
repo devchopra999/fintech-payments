@@ -1,0 +1,20 @@
+{
+  "name": "fintech-payments",
+  "version": "1.0.0",
+  "description": "Payments service for the fintech demo platform - charges via the NexPay gateway",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.11.0",
+    "sequelize": "^6.37.3",
+    "uuid": "^9.0.1",
+    "zod": "^3.23.8"
+  }
+}
