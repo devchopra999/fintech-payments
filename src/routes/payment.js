@@ -1,6 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { z } = require('zod');
+const { sequelize } = require('../db');
 const { Payment } = require('../models/payment');
 const { Transaction } = require('../models/transaction');
 const { requireAuth } = require('../middleware/auth');
@@ -99,30 +100,46 @@ router.post('/payment/webhook/nexpay', async (req, res, next) => {
   try {
     const { reference, status, id: gatewayTransactionId } = req.body;
     console.log(`[fintech-payments] webhook received for reference ${reference}: status=${status}`);
-    const payment = await Payment.findOne({ where: { reference } });
-    if (!payment) return res.status(404).json({ error: { code: 'PAYMENT_NOT_FOUND', message: 'unknown reference' } });
 
-    // NexPay may deliver the webhook more than once for the same charge - resolving an
-    // already-resolved payment again must be a no-op, never a second credit
-    if (payment.status !== 'PENDING') {
-      return res.status(200).json({ message: 'already resolved', payment });
+    // lock the payment row and re-check its status inside the transaction so two concurrent
+    // deliveries of the same webhook can't both pass the "already resolved" check and both write
+    const result = await sequelize.transaction(async (t) => {
+      const payment = await Payment.findOne({ where: { reference }, transaction: t, lock: t.LOCK.UPDATE });
+      if (!payment) throw Object.assign(new Error('unknown reference'), { statusCode: 404, code: 'PAYMENT_NOT_FOUND' });
+
+      // NexPay may deliver the webhook more than once for the same charge - resolving an
+      // already-resolved payment again must be a no-op, never a second credit
+      if (payment.status !== 'PENDING') {
+        return { payment, alreadyResolved: true };
+      }
+
+      if (status === 'succeeded') {
+        await Transaction.create({ paymentId: payment.id, gatewayTransactionId, status: 'SUCCESS', response: req.body }, { transaction: t });
+        payment.status = 'SUCCESS';
+        await payment.save({ transaction: t });
+      } else {
+        await Transaction.create({ paymentId: payment.id, gatewayTransactionId, status: 'FAILED', response: req.body }, { transaction: t });
+        payment.status = 'FAILED';
+        await payment.save({ transaction: t });
+      }
+
+      return { payment, alreadyResolved: false };
+    });
+
+    if (result.alreadyResolved) {
+      return res.status(200).json({ message: 'already resolved', payment: result.payment });
     }
 
-    if (status === 'succeeded') {
-      await Transaction.create({ paymentId: payment.id, gatewayTransactionId, status: 'SUCCESS', response: req.body });
-      payment.status = 'SUCCESS';
-      await payment.save();
-      await creditWallet(payment.walletId, payment.amount, payment.reference);
-      notify({ userId: payment.userId, eventType: 'PAYMENT_SUCCESS', message: `Payment ${payment.id} succeeded` });
+    if (result.payment.status === 'SUCCESS') {
+      await creditWallet(result.payment.walletId, result.payment.amount, result.payment.reference);
+      notify({ userId: result.payment.userId, eventType: 'PAYMENT_SUCCESS', message: `Payment ${result.payment.id} succeeded` });
     } else {
-      await Transaction.create({ paymentId: payment.id, gatewayTransactionId, status: 'FAILED', response: req.body });
-      payment.status = 'FAILED';
-      await payment.save();
-      notify({ userId: payment.userId, eventType: 'PAYMENT_FAILED', message: `Payment ${payment.id} failed` });
+      notify({ userId: result.payment.userId, eventType: 'PAYMENT_FAILED', message: `Payment ${result.payment.id} failed` });
     }
 
-    res.status(200).json({ payment });
+    res.status(200).json({ payment: result.payment });
   } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: { code: err.code, message: err.message } });
     next(err);
   }
 });
