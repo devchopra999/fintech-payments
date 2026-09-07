@@ -8,6 +8,14 @@ const paymentRoutes = require('./routes/payment');
 const app = express();
 app.use(express.json());
 
+app.use((req, res, next) => {
+  const startedAt = Date.now();
+  res.on('finish', () => {
+    console.log(`[fintech-payments] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - startedAt}ms)`);
+  });
+  next();
+});
+
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'fintech-payments' }));
 
 app.get('/health/ready', async (req, res) => {
@@ -29,6 +37,7 @@ app.use((err, req, res, next) => {
 const port = process.env.PORT || 4003;
 
 async function start() {
+  console.log('fintech-payments starting up');
   await sequelize.authenticate();
   await sequelize.sync();
   app.listen(port, () => console.log(`fintech-payments listening on :${port}`));

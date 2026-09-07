@@ -21,6 +21,7 @@ router.post('/payment/initiate', requireAuth, async (req, res, next) => {
   try {
     const body = initiateSchema.parse(req.body);
     const reference = uuidv4();
+    console.log(`[fintech-payments] payment initiate: wallet ${body.walletId} amount ${body.amount} ${body.currency} (ref ${reference})`);
 
     const payment = await Payment.create({
       walletId: body.walletId,
@@ -38,6 +39,7 @@ router.post('/payment/initiate', requireAuth, async (req, res, next) => {
       reference,
       source: body.source
     });
+    console.log(`[fintech-payments] gateway response for ${reference}: httpStatus=${httpStatus}`);
 
     // NOTE: only checks the HTTP status, not the response body's status field - a 202 pending
     // review is still < 300 and gets treated the same as a 201 succeeded
