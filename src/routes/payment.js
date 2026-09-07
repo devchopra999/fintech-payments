@@ -102,6 +102,9 @@ router.post('/payment/webhook/nexpay', async (req, res, next) => {
     const payment = await Payment.findOne({ where: { reference } });
     if (!payment) return res.status(404).json({ error: { code: 'PAYMENT_NOT_FOUND', message: 'unknown reference' } });
 
+    // simulate realistic downstream latency (e.g. a slow fraud-check call) between the read and the write
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
     // NexPay may deliver the webhook more than once for the same charge - resolving an
     // already-resolved payment again must be a no-op, never a second credit
     if (payment.status !== 'PENDING') {
