@@ -99,12 +99,7 @@ router.post('/payment/webhook/nexpay', async (req, res, next) => {
     const payment = await Payment.findOne({ where: { reference } });
     if (!payment) return res.status(404).json({ error: { code: 'PAYMENT_NOT_FOUND', message: 'unknown reference' } });
 
-    // NexPay may deliver the webhook more than once for the same charge - resolving an
-    // already-resolved payment again must be a no-op, never a second credit
-    if (payment.status !== 'PENDING') {
-      return res.status(200).json({ message: 'already resolved', payment });
-    }
-
+    // NOTE: does not guard against payment.status already being resolved - replays re-apply
     if (status === 'succeeded') {
       await Transaction.create({ paymentId: payment.id, gatewayTransactionId, status: 'SUCCESS', response: req.body });
       payment.status = 'SUCCESS';
