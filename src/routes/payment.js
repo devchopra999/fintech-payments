@@ -39,9 +39,9 @@ router.post('/payment/initiate', requireAuth, async (req, res, next) => {
       source: body.source
     });
 
-    // NexPay's contract requires branching on the response body's status, not just the HTTP
-    // status - 202 is still a 2xx but means "pending review", not "succeeded"
-    if (gatewayResponse.status === 'succeeded') {
+    // NOTE: only checks the HTTP status, not the response body's status field - a 202 pending
+    // review is still < 300 and gets treated the same as a 201 succeeded
+    if (httpStatus < 300) {
       await Transaction.create({
         paymentId: payment.id, gatewayTransactionId: gatewayResponse.id, status: 'SUCCESS', response: gatewayResponse
       });
@@ -49,11 +49,6 @@ router.post('/payment/initiate', requireAuth, async (req, res, next) => {
       await payment.save();
       await creditWallet(payment.walletId, payment.amount, payment.reference);
       notify({ userId: payment.userId, eventType: 'PAYMENT_SUCCESS', message: `Payment ${payment.id} succeeded` });
-    } else if (gatewayResponse.status === 'pending') {
-      await Transaction.create({
-        paymentId: payment.id, gatewayTransactionId: gatewayResponse.id, status: 'PENDING', response: gatewayResponse
-      });
-      // stays PENDING until NexPay's webhook resolves it - do not credit the wallet yet
     } else {
       await Transaction.create({
         paymentId: payment.id,
@@ -92,36 +87,7 @@ router.get('/payment/wallet/:walletId', requireAuth, async (req, res, next) => {
   }
 });
 
-// called by NexPay, not the end user - no bearer auth, matches the shared contract in docs/nexpay-contract.md
-router.post('/payment/webhook/nexpay', async (req, res, next) => {
-  try {
-    const { reference, status, id: gatewayTransactionId } = req.body;
-    const payment = await Payment.findOne({ where: { reference } });
-    if (!payment) return res.status(404).json({ error: { code: 'PAYMENT_NOT_FOUND', message: 'unknown reference' } });
-
-    // NexPay may deliver the webhook more than once for the same charge - resolving an
-    // already-resolved payment again must be a no-op, never a second credit
-    if (payment.status !== 'PENDING') {
-      return res.status(200).json({ message: 'already resolved', payment });
-    }
-
-    if (status === 'succeeded') {
-      await Transaction.create({ paymentId: payment.id, gatewayTransactionId, status: 'SUCCESS', response: req.body });
-      payment.status = 'SUCCESS';
-      await payment.save();
-      await creditWallet(payment.walletId, payment.amount, payment.reference);
-      notify({ userId: payment.userId, eventType: 'PAYMENT_SUCCESS', message: `Payment ${payment.id} succeeded` });
-    } else {
-      await Transaction.create({ paymentId: payment.id, gatewayTransactionId, status: 'FAILED', response: req.body });
-      payment.status = 'FAILED';
-      await payment.save();
-      notify({ userId: payment.userId, eventType: 'PAYMENT_FAILED', message: `Payment ${payment.id} failed` });
-    }
-
-    res.status(200).json({ payment });
-  } catch (err) {
-    next(err);
-  }
-});
+// NOTE: docs/nexpay-contract.md requires a webhook receiver for charges NexPay returns as
+// "pending" (202) - no such endpoint is registered on this branch, so NexPay's callback 404s
 
 module.exports = router;
