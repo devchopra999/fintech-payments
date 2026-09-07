@@ -21,6 +21,7 @@ router.post('/payment/initiate', requireAuth, async (req, res, next) => {
   try {
     const body = initiateSchema.parse(req.body);
     const reference = uuidv4();
+    console.log(`[fintech-payments] payment initiate: wallet ${body.walletId} amount ${body.amount} ${body.currency} (ref ${reference})`);
 
     const payment = await Payment.create({
       walletId: body.walletId,
@@ -38,6 +39,7 @@ router.post('/payment/initiate', requireAuth, async (req, res, next) => {
       reference,
       source: body.source
     });
+    console.log(`[fintech-payments] gateway response for ${reference}: httpStatus=${httpStatus} status=${gatewayResponse.status}`);
 
     // NexPay's contract requires branching on the response body's status, not just the HTTP
     // status - 202 is still a 2xx but means "pending review", not "succeeded"
@@ -96,6 +98,7 @@ router.get('/payment/wallet/:walletId', requireAuth, async (req, res, next) => {
 router.post('/payment/webhook/nexpay', async (req, res, next) => {
   try {
     const { reference, status, id: gatewayTransactionId } = req.body;
+    console.log(`[fintech-payments] webhook received for reference ${reference}: status=${status}`);
     const payment = await Payment.findOne({ where: { reference } });
     if (!payment) return res.status(404).json({ error: { code: 'PAYMENT_NOT_FOUND', message: 'unknown reference' } });
 
